@@ -1,0 +1,7 @@
+[workspace]
+members = [
+    "shared",
+    "c2_server",
+    "implant",
+]
+resolver = "2"

@@ -45,10 +45,11 @@ pédagogique composé de deux parties qui communiquent via HTTPS.
 │  └──────────────────────────────────┘                               │
 │                                                                     │
 │  Emplacement physique sur la VM :                                   │
-│  C:\Users\<user>\AppData\Local\Microsoft\OneDrive\                  │
-│    OneDriveUpdaterService.exe  ← beacon (masquerade T1036.005)      │
+│  C:\Users\<user>\AppData\Roaming\Microsoft\Windows\Display\         │
+│    <implant>.exe  ← beacon (masquerade T1036.005)                   │
 │                                                                     │
-│  Scheduled Task : "OneDrive Updater Service"                        │
+│  Registry : HKCU\...\Run → valeur "DisplayOptimization"             │
+│  Scheduled Task : "DisplayOptimizationTask"                         │
 │  Trigger : logon (tout utilisateur) — Hidden: Yes                   │
 └─────────────────────────────────────────────────────────────────────┘
 ```
@@ -124,8 +125,8 @@ s0P0wn3d/
 │       │
 │       ├── persistence/        ← survie au reboot (VIR-32)
 │       │   ├── mod.rs
-│       │   ├── registry.rs         ← HKCU...\Run → OneDriveUpdaterService
-│       │   ├── scheduled_task.rs   ← tâche planifiée masquée OneDrive (T1053.005)
+│       │   ├── registry.rs         ← HKCU...\Run → valeur "DisplayOptimization"
+│       │   ├── scheduled_task.rs   ← tâche planifiée "DisplayOptimizationTask" (T1053.005)
 │       │   └── watchdog.rs         ← RegisterWaitForSingleObject — relance si tué
 │       │
 │       └── execution/          ← capacités offensives
@@ -149,7 +150,7 @@ s0P0wn3d/
 | Pull (beacon poll) | Pas de connexion entrante sur la VM — bypasse les firewalls |
 | Jitter ±2s | Évite les patterns de trafic régulier détectables par un SIEM |
 | Cert CN=update.microsoft.com | Légitime aux yeux d'un analyste qui survole les logs TLS |
-| Masquerade OneDrive | OneDrive tourne déjà au démarrage sur la VM, beacon s'y noie |
+| Masquerade `%APPDATA%\Microsoft\Windows\Display\` | Dossier Microsoft légitime toujours présent, indépendant d'OneDrive |
 | Rust + MSVC toolchain | Binaire natif Windows, pas de dépendance Python/DLL externe, meilleure évasion AV |
 | RSA-4096 + AES-256-GCM | Échange de clé asymétrique initial, puis chiffrement symétrique de session |
 | rustls (pas OpenSSL) | TLS natif Rust, zéro dépendance système, CRT statique |
@@ -158,12 +159,13 @@ s0P0wn3d/
 
 ## Inspirations architecturales
 
-Ce design s'inspire de deux frameworks C2 open-source de référence, **uniquement sur le plan architectural** — aucun code n'est réutilisé.
+Ce design s'inspire de trois outils open-source de référence, **uniquement sur le plan architectural** — aucun code n'est réutilisé.
 
-| Framework | Ce qu'on en retient |
+| Outil | Ce qu'on en retient |
 |---|---|
 | **Metasploit** | Séparation claire handler (serveur) / payload (implant), pattern de staging, queue de tâches par session |
 | **Sliver** | Architecture Go/Rust avec workspace multi-crates, canal HTTPS avec certificat auto-signé, beacon poll + jitter, chiffrement de session asymétrique + symétrique |
+| **Ligolo-ng** | Pattern de connexion reverse (agent initie la connexion vers le serveur, jamais l'inverse) |
 
 ### Différences volontaires avec ces frameworks
 
@@ -195,8 +197,8 @@ cargo build -p c2_server --release
 |---|---|---|
 | Application Layer Protocol: Web Protocols | T1071.001 | Canal HTTPS beacon ↔ serveur |
 | Encrypted Channel: Asymmetric Cryptography | T1573.002 | RSA-4096 + AES-256-GCM sur toutes les comms |
-| Masquerading: Match Legitimate Name | T1036.005 | implant → OneDriveUpdaterService.exe |
-| Scheduled Task/Job: Scheduled Task | T1053.005 | persistence/scheduled_task.rs au logon |
+| Masquerading: Match Legitimate Name | T1036.005 | implant déployé dans `%APPDATA%\Microsoft\Windows\Display\` |
+| Scheduled Task/Job: Scheduled Task | T1053.005 | tâche `DisplayOptimizationTask` au logon |
 | Command and Scripting Interpreter | T1059 | execution/shell.rs via CreateProcess + pipes |
 | OS Credential Dumping | T1003 | execution/creds.rs — SAM/LSASS |
 | Input Capture: Keylogging | T1056.001 | execution/keylog.rs — SetWindowsHookEx |
@@ -210,13 +212,14 @@ cargo build -p c2_server --release
 |---|---|
 | Connexions HTTPS sortantes régulières vers 192.168.56.112 toutes les ~5s | Wireshark / Zeek — filtre `ip.dst == 192.168.56.112 && tls` |
 | Certificat TLS auto-signé avec CN=update.microsoft.com (issuer = subject) | Wireshark — `tls.handshake.certificate` → vérifier l'issuer |
-| Processus `OneDriveUpdaterService.exe` avec parent inhabituel | Windows Event 4688 — surveiller le PPID |
-| Scheduled Task nommée "OneDrive Updater Service" créée par un utilisateur | Event 4698 — création de scheduled task |
+| Processus dans `%APPDATA%\Microsoft\Windows\Display\` avec parent inhabituel | Windows Event 4688 — surveiller le PPID et le chemin process |
+| Scheduled Task nommée "DisplayOptimizationTask" créée par un utilisateur | Event 4698 — création de scheduled task |
+| Valeur registre `DisplayOptimization` dans `HKCU\...\Run` | Sysmon Event 13 — Registry value set |
 | `reg save HKLM\SAM` dans les logs de commandes | Event 4688 + Sysmon Event 1 |
 
 **Sigma rule (détection scheduled task suspecte) :**
 ```yaml
-title: Scheduled Task OneDrive Masquerade
+title: Scheduled Task DisplayOptimization Masquerade
 status: experimental
 logsource:
   product: windows
@@ -224,7 +227,7 @@ logsource:
 detection:
   selection:
     EventID: 4698
-    TaskName|contains: 'OneDrive Updater'
+    TaskName|contains: 'DisplayOptimization'
   condition: selection
 level: high
 ```
@@ -243,7 +246,8 @@ cargo run -p c2_server
 # 3. Compiler et déployer l'implant sur la VM
 cargo build -p implant --target x86_64-pc-windows-msvc --release
 # Copier target/x86_64-pc-windows-msvc/release/implant.exe
-# → C:\Users\<user>\AppData\Local\Microsoft\OneDrive\OneDriveUpdaterService.exe
+# → C:\Users\<user>\AppData\Roaming\Microsoft\Windows\Display\implant.exe
+# (le module persistence le copie automatiquement au premier lancement)
 
 # 4. Vérifier le check-in depuis le host
 curl -k https://192.168.56.112/agents

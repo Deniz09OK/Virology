@@ -144,8 +144,20 @@ s0P0wn3d/
 
 ## Choix techniques justifiés
 
-| Décision | Raison |
-|---|---|
+| Technique | ID | Composant concerné |
+|---|---|---|
+| Application Layer Protocol: Web Protocols | T1071.001 | Canal HTTPS beacon ↔ serveur (`communication/https.rs`) |
+| Encrypted Channel: Symmetric Cryptography | T1573.001 | AES-256-GCM sur tous les payloads C2 (`shared/src/crypto.rs`) |
+| Encrypted Channel: Asymmetric Cryptography | T1573.002 | RSA-4096 pour l'échange de clé de session (`shared/src/crypto.rs`) |
+| Masquerading: Match Legitimate Name or Location | T1036.005 | implant dans `%APPDATA%\Microsoft\Windows\Display\`, cert `CN=update.microsoft.com` |
+| Obfuscated Files or Information | T1027 | strings sensibles chiffrées à la compilation via `obfstr!` (`evasion/obfuscation.rs`) |
+| Boot or Logon Autostart: Registry Run Keys | T1547.001 | valeur `DisplayOptimization` dans `HKCU\...\Run` (`persistence/registry.rs`) |
+| Scheduled Task/Job: Scheduled Task | T1053.005 | tâche `DisplayOptimizationTask` au logon (`persistence/scheduled_task.rs`) |
+| Hide Artifacts: Hidden Window | T1564.003 | `#![windows_subsystem = "windows"]` + `CREATE_NO_WINDOW` — aucune fenêtre visible |
+| Command and Scripting Interpreter | T1059 | `execution/shell.rs` via CreateProcess + pipes |
+| OS Credential Dumping | T1003 | `execution/creds.rs` — SAM/LSASS |
+| Input Capture: Keylogging | T1056.001 | `execution/keylog.rs` — SetWindowsHookEx |
+| Data from Local System | T1005 | `execution/loot.rs` — collecte fichiers sensibles ||---|---|
 | HTTPS port 443 | Trafic indiscernable d'une mise à jour Windows légitime |
 | Pull (beacon poll) | Pas de connexion entrante sur la VM — bypasse les firewalls |
 | Jitter ±2s | Évite les patterns de trafic régulier détectables par un SIEM |

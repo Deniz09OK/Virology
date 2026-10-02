@@ -1,6 +1,6 @@
 [workspace]
 members = [
-    "shared",
+    "commun",
     "c2_server",
     "implant",
 ]

@@ -28,7 +28,7 @@ pédagogique composé de deux parties qui communiquent via HTTPS.
 │  │  GET  /agents  → liste agents    │                               │
 │  └──────────────┬───────────────────┘                               │
 │                 │  HTTPS (TLS 1.2+, rustls, cert auto-signé         │
-│                 │  CN=update.microsoft.com)                         │
+│                 │  CN=localhost, pin côté implant)                  │
 └─────────────────┼───────────────────────────────────────────────────┘
                   │  host-only network 192.168.56.0/24
                   │  (jamais exposé sur le réseau réel)
@@ -149,7 +149,7 @@ s0P0wn3d/
 | HTTPS port 443 | Trafic indiscernable d'une mise à jour Windows légitime |
 | Pull (beacon poll) | Pas de connexion entrante sur la VM — bypasse les firewalls |
 | Jitter ±2s | Évite les patterns de trafic régulier détectables par un SIEM |
-| Cert CN=update.microsoft.com | Légitime aux yeux d'un analyste qui survole les logs TLS |
+| Cert auto-signé CN=localhost + pin côté implant | Pas de conflit HSTS/CT avec microsoft.com — le masquerade passe par le nom de fichier et le chemin, pas le cert TLS |
 | Masquerade `%APPDATA%\Microsoft\Windows\Display\` | Dossier Microsoft légitime toujours présent, indépendant d'OneDrive |
 | Rust + MSVC toolchain | Binaire natif Windows, pas de dépendance Python/DLL externe, meilleure évasion AV |
 | RSA-4096 + AES-256-GCM | Échange de clé asymétrique initial, puis chiffrement symétrique de session |
@@ -198,7 +198,7 @@ cargo build -p c2_server --release
 | Application Layer Protocol: Web Protocols | T1071.001 | Canal HTTPS beacon ↔ serveur (`communication/https.rs`) |
 | Encrypted Channel: Symmetric Cryptography | T1573.001 | AES-256-GCM sur tous les payloads C2 (`commun/src/crypto.rs`) |
 | Encrypted Channel: Asymmetric Cryptography | T1573.002 | RSA-4096 pour l'échange de clé de session (`commun/src/crypto.rs`) |
-| Masquerading: Match Legitimate Name or Location | T1036.005 | implant dans `%APPDATA%\Microsoft\Windows\Display\`, cert `CN=update.microsoft.com` |
+| Masquerading: Match Legitimate Name or Location | T1036.005 | implant dans `%APPDATA%\Microsoft\Windows\Display\` sous un nom cohérent avec le dossier |
 | Obfuscated Files or Information | T1027 | strings sensibles chiffrées à la compilation via `obfstr!` (`evasion/obfuscation.rs`) |
 | Boot or Logon Autostart: Registry Run Keys | T1547.001 | valeur `DisplayOptimization` dans `HKCU\...\Run` (`persistence/registry.rs`) |
 | Scheduled Task/Job: Scheduled Task | T1053.005 | tâche `DisplayOptimizationTask` au logon (`persistence/scheduled_task.rs`) |
@@ -215,7 +215,7 @@ cargo build -p c2_server --release
 | Indicateur | Outil de détection |
 |---|---|
 | Connexions HTTPS sortantes régulières vers 192.168.56.112 toutes les ~5s | Wireshark / Zeek — filtre `ip.dst == 192.168.56.112 && tls` |
-| Certificat TLS auto-signé avec CN=update.microsoft.com (issuer = subject) | Wireshark — `tls.handshake.certificate` → vérifier l'issuer |
+| Certificat TLS auto-signé (issuer = subject, CN=localhost) vers une IP privée | Wireshark — `tls.handshake.certificate` → vérifier l'issuer et le SAN |
 | Processus dans `%APPDATA%\Microsoft\Windows\Display\` avec parent inhabituel | Windows Event 4688 — surveiller le PPID et le chemin process |
 | Scheduled Task nommée "DisplayOptimizationTask" créée par un utilisateur | Event 4698 — création de scheduled task |
 | Valeur registre `DisplayOptimization` dans `HKCU\...\Run` | Sysmon Event 13 — Registry value set |

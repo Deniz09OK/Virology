@@ -113,7 +113,7 @@ s0P0wn3d/
 │       ├── main.rs             ← boucle beacon + dispatch des commandes
 │       ├── config.rs           ← IP C2, port, intervalle (obfstr à la compilation)
 │       │
-│       ├── communication/      ← transport réseau (VIR-30)
+│       ├── communication/      ← transport réseau (VIR-30) — collect + transmit uniquement
 │       │   ├── mod.rs
 │       │   ├── https.rs        ← beacon HTTPS polling reqwest + rustls + jitter
 │       │   └── dns.rs          ← tunnel DNS alternatif (T1071.004)
@@ -128,6 +128,7 @@ s0P0wn3d/
 │       │   ├── registry.rs         ← HKCU...\Run → valeur "DisplayOptimization"
 │       │   ├── scheduled_task.rs   ← tâche planifiée "DisplayOptimizationTask" (T1053.005)
 │       │   └── watchdog.rs         ← RegisterWaitForSingleObject — relance si tué
+│       │                             (responsabilité unique : surveiller le process, rien d'autre)
 │       │
 │       └── execution/          ← capacités offensives
 │           ├── mod.rs
@@ -139,6 +140,40 @@ s0P0wn3d/
 ├── scripts/gen_cert.py         ← génère cert.pem + key.pem (one-shot)
 └── certs/                      ← cert.pem + key.pem (dans .gitignore)
 ```
+
+---
+
+## Principes d'architecture
+
+### Contrainte agent unique
+
+L'architecture démarre avec **un seul agent** avant toute considération multi-agent ou hexagonale.
+Cette contrainte est volontaire : maîtriser un agent simple de bout en bout avant d'introduire
+de la complexité supplémentaire. L'évolution vers plusieurs agents reste possible mais n'est
+pas dans le périmètre de cette version.
+
+### Séparation des responsabilités (SOLID — SRP)
+
+Chaque module a **une seule raison de changer** :
+
+| Module | Responsabilité exclusive |
+|---|---|
+| `commun/src/crypto.rs` | Chiffrement AES-256-GCM + échange de clé RSA-4096 |
+| `commun/src/protocol.rs` | Définition des structs JSON échangés entre implant et serveur |
+| `implant/communication/` | Collecter les résultats et transmettre au C2 — rien d'autre |
+| `implant/persistence/watchdog.rs` | Surveiller le process et le relancer s'il est tué — rien d'autre |
+| `implant/execution/` | Exécuter les commandes reçues — rien d'autre |
+| `c2_server/handler.rs` | Logique métier du serveur (enregistrement, queue, résultats) |
+
+### Watchdog — justification du choix architectural
+
+Le watchdog (`persistence/watchdog.rs`) est un **module isolé dans `implant/`**, pas une crate
+indépendante. Raisons :
+
+- Il n'a **aucun type partagé** avec `commun/` ou `c2_server/` — pas besoin d'une crate séparée
+- Sa seule API est un appel bloquant `RegisterWaitForSingleObject` — taille et complexité minimales
+- Le séparer en crate ajouterait de la complexité Cargo sans valeur pédagogique
+- Il reste néanmoins isolé dans son propre fichier pour respecter le SRP
 
 ---
 
@@ -154,6 +189,7 @@ s0P0wn3d/
 | Rust + MSVC toolchain | Binaire natif Windows, pas de dépendance Python/DLL externe, meilleure évasion AV |
 | RSA-4096 + AES-256-GCM | Échange de clé asymétrique initial, puis chiffrement symétrique de session |
 | rustls (pas OpenSSL) | TLS natif Rust, zéro dépendance système, CRT statique |
+| Agent unique (v1) | Maîtriser un agent simple avant d'introduire multi-agent ou architecture hexagonale |
 
 ---
 
@@ -248,4 +284,5 @@ python scripts/gen_cert.py
 cargo run -p c2_server
 
 # 3. Compiler et déployer l'implant sur la VM
+cargo build -p implant --target x86_64-pc-windows-msvc --release
 ```

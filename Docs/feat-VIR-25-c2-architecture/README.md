@@ -28,7 +28,7 @@ pédagogique composé de deux parties qui communiquent via HTTPS.
 │  │  GET  /agents  → liste agents    │                               │
 │  └──────────────┬───────────────────┘                               │
 │                 │  HTTPS (TLS 1.2+, rustls, cert auto-signé         │
-│                 │  CN=update.microsoft.com)                         │
+│                 │  CN=localhost, pin côté implant)                  │
 └─────────────────┼───────────────────────────────────────────────────┘
                   │  host-only network 192.168.56.0/24
                   │  (jamais exposé sur le réseau réel)
@@ -95,7 +95,7 @@ POST /task
 ```
 s0P0wn3d/
 │
-├── shared/                     ← crate partagée (host + implant)
+├── commun/                     ← crate partagée (host + implant)
 │   └── src/
 │       ├── lib.rs              ← re-exports pub mod crypto; pub mod protocol;
 │       ├── crypto.rs           ← AES-256-GCM + RSA-4096 (VIR-31)
@@ -113,7 +113,7 @@ s0P0wn3d/
 │       ├── main.rs             ← boucle beacon + dispatch des commandes
 │       ├── config.rs           ← IP C2, port, intervalle (obfstr à la compilation)
 │       │
-│       ├── communication/      ← transport réseau (VIR-30)
+│       ├── communication/      ← transport réseau (VIR-30) — collect + transmit uniquement
 │       │   ├── mod.rs
 │       │   ├── https.rs        ← beacon HTTPS polling reqwest + rustls + jitter
 │       │   └── dns.rs          ← tunnel DNS alternatif (T1071.004)
@@ -128,6 +128,7 @@ s0P0wn3d/
 │       │   ├── registry.rs         ← HKCU...\Run → valeur "DisplayOptimization"
 │       │   ├── scheduled_task.rs   ← tâche planifiée "DisplayOptimizationTask" (T1053.005)
 │       │   └── watchdog.rs         ← RegisterWaitForSingleObject — relance si tué
+│       │                             (responsabilité unique : surveiller le process, rien d'autre)
 │       │
 │       └── execution/          ← capacités offensives
 │           ├── mod.rs
@@ -142,6 +143,40 @@ s0P0wn3d/
 
 ---
 
+## Principes d'architecture
+
+### Contrainte agent unique
+
+L'architecture démarre avec **un seul agent** avant toute considération multi-agent ou hexagonale.
+Cette contrainte est volontaire : maîtriser un agent simple de bout en bout avant d'introduire
+de la complexité supplémentaire. L'évolution vers plusieurs agents reste possible mais n'est
+pas dans le périmètre de cette version.
+
+### Séparation des responsabilités (SOLID — SRP)
+
+Chaque module a **une seule raison de changer** :
+
+| Module | Responsabilité exclusive |
+|---|---|
+| `commun/src/crypto.rs` | Chiffrement AES-256-GCM + échange de clé RSA-4096 |
+| `commun/src/protocol.rs` | Définition des structs JSON échangés entre implant et serveur |
+| `implant/communication/` | Collecter les résultats et transmettre au C2 — rien d'autre |
+| `implant/persistence/watchdog.rs` | Surveiller le process et le relancer s'il est tué — rien d'autre |
+| `implant/execution/` | Exécuter les commandes reçues — rien d'autre |
+| `c2_server/handler.rs` | Logique métier du serveur (enregistrement, queue, résultats) |
+
+### Watchdog — justification du choix architectural
+
+Le watchdog (`persistence/watchdog.rs`) est un **module isolé dans `implant/`**, pas une crate
+indépendante. Raisons :
+
+- Il n'a **aucun type partagé** avec `commun/` ou `c2_server/` — pas besoin d'une crate séparée
+- Sa seule API est un appel bloquant `RegisterWaitForSingleObject` — taille et complexité minimales
+- Le séparer en crate ajouterait de la complexité Cargo sans valeur pédagogique
+- Il reste néanmoins isolé dans son propre fichier pour respecter le SRP
+
+---
+
 ## Choix techniques justifiés
 
 | Décision | Raison |
@@ -149,11 +184,12 @@ s0P0wn3d/
 | HTTPS port 443 | Trafic indiscernable d'une mise à jour Windows légitime |
 | Pull (beacon poll) | Pas de connexion entrante sur la VM — bypasse les firewalls |
 | Jitter ±2s | Évite les patterns de trafic régulier détectables par un SIEM |
-| Cert CN=update.microsoft.com | Légitime aux yeux d'un analyste qui survole les logs TLS |
+| Cert auto-signé CN=localhost + pin côté implant | Pas de conflit HSTS/CT avec microsoft.com — le masquerade passe par le nom de fichier et le chemin, pas le cert TLS |
 | Masquerade `%APPDATA%\Microsoft\Windows\Display\` | Dossier Microsoft légitime toujours présent, indépendant d'OneDrive |
 | Rust + MSVC toolchain | Binaire natif Windows, pas de dépendance Python/DLL externe, meilleure évasion AV |
 | RSA-4096 + AES-256-GCM | Échange de clé asymétrique initial, puis chiffrement symétrique de session |
 | rustls (pas OpenSSL) | TLS natif Rust, zéro dépendance système, CRT statique |
+| Agent unique (v1) | Maîtriser un agent simple avant d'introduire multi-agent ou architecture hexagonale |
 
 ---
 
@@ -196,9 +232,9 @@ cargo build -p c2_server --release
 | Technique | ID | Composant concerné |
 |---|---|---|
 | Application Layer Protocol: Web Protocols | T1071.001 | Canal HTTPS beacon ↔ serveur (`communication/https.rs`) |
-| Encrypted Channel: Symmetric Cryptography | T1573.001 | AES-256-GCM sur tous les payloads C2 (`shared/src/crypto.rs`) |
-| Encrypted Channel: Asymmetric Cryptography | T1573.002 | RSA-4096 pour l'échange de clé de session (`shared/src/crypto.rs`) |
-| Masquerading: Match Legitimate Name or Location | T1036.005 | implant dans `%APPDATA%\Microsoft\Windows\Display\`, cert `CN=update.microsoft.com` |
+| Encrypted Channel: Symmetric Cryptography | T1573.001 | AES-256-GCM sur tous les payloads C2 (`commun/src/crypto.rs`) |
+| Encrypted Channel: Asymmetric Cryptography | T1573.002 | RSA-4096 pour l'échange de clé de session (`commun/src/crypto.rs`) |
+| Masquerading: Match Legitimate Name or Location | T1036.005 | implant dans `%APPDATA%\Microsoft\Windows\Display\` sous un nom cohérent avec le dossier |
 | Obfuscated Files or Information | T1027 | strings sensibles chiffrées à la compilation via `obfstr!` (`evasion/obfuscation.rs`) |
 | Boot or Logon Autostart: Registry Run Keys | T1547.001 | valeur `DisplayOptimization` dans `HKCU\...\Run` (`persistence/registry.rs`) |
 | Scheduled Task/Job: Scheduled Task | T1053.005 | tâche `DisplayOptimizationTask` au logon (`persistence/scheduled_task.rs`) |
@@ -215,7 +251,7 @@ cargo build -p c2_server --release
 | Indicateur | Outil de détection |
 |---|---|
 | Connexions HTTPS sortantes régulières vers 192.168.56.112 toutes les ~5s | Wireshark / Zeek — filtre `ip.dst == 192.168.56.112 && tls` |
-| Certificat TLS auto-signé avec CN=update.microsoft.com (issuer = subject) | Wireshark — `tls.handshake.certificate` → vérifier l'issuer |
+| Certificat TLS auto-signé (issuer = subject, CN=localhost) vers une IP privée | Wireshark — `tls.handshake.certificate` → vérifier l'issuer et le SAN |
 | Processus dans `%APPDATA%\Microsoft\Windows\Display\` avec parent inhabituel | Windows Event 4688 — surveiller le PPID et le chemin process |
 | Scheduled Task nommée "DisplayOptimizationTask" créée par un utilisateur | Event 4698 — création de scheduled task |
 | Valeur registre `DisplayOptimization` dans `HKCU\...\Run` | Sysmon Event 13 — Registry value set |
@@ -248,3 +284,5 @@ python scripts/gen_cert.py
 cargo run -p c2_server
 
 # 3. Compiler et déployer l'implant sur la VM
+cargo build -p implant --target x86_64-pc-windows-msvc --release
+```

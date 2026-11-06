@@ -89,10 +89,38 @@ l'adresse en mémoire.
 ### Hash FNV-1a (compile-time)
 
 ```rust
-pub const H_VIRTUAL_ALLOC: u32 = fnv1a(b"VirtualAlloc");  // 0x...
+pub const H_VIRTUAL_ALLOC: u32 = fnv1a(b"VirtualAlloc");
 ```
 
 Le hash est une constante numérique dans le binaire — pas de string.
+
+---
+
+## Étape 3 — Validation sur VM
+
+### Méthodologie
+
+1. Cross-compiler le binaire depuis le host Linux :
+   ```bash
+   cargo build --release --target x86_64-pc-windows-msvc
+   ```
+2. Copier `target/x86_64-pc-windows-msvc/release/implant.exe` sur la VM (192.168.56.111)
+3. Sur la VM, vérifier que Windows Defender est actif et à jour
+4. Lancer `implant.exe` depuis un terminal standard (Medium Integrity)
+5. Observer les alertes Defender et les Event IDs Sysmon
+6. Analyser le binaire avec `strings implant.exe` et CFF Explorer (vérifier l'IAT)
+
+### Résultats de test
+
+> à compléter après test sur la VM
+
+| Technique | Résultat | Alerte Defender | Event ID Sysmon observé |
+|-----------|----------|-----------------|-------------------------|
+| obfstr (strings XOR) | à tester | à renseigner | à renseigner |
+| API Hashing (EAT walk) | à tester | à renseigner | à renseigner |
+| Profil release (strip+lto) | à tester | à renseigner | à renseigner |
+
+**Verdict global :** `à compléter` (Détecté / Non détecté)
 
 ---
 
@@ -109,24 +137,100 @@ implant/src/evasion/
 
 ## Note Blue Team — Comment détecter
 
-| Signal | Détail | Outil |
-|--------|--------|-------|
-| Accès direct à la mémoire des DLL | `ReadProcessMemory` sur `kernel32.dll` sans appel `GetProcAddress` | Sysmon Event ID 10 |
-| Chargement de DLL sans import visible | Pas d'entrée IAT pour les fonctions appelées | PE analysis (PE-bear, CFF Explorer) |
-| Scan des hash connus | Chercher les constantes FNV-1a dans le binaire | YARA rule sur les valeurs `2166136261` et `16777619` |
-| Comportement réseau HTTPS vers IP non catégorisée | Connexion sortante sur port 443 vers `192.168.56.112` | Sysmon Event ID 3, Wireshark |
-| Scheduled Task créée par un process inconnu | Persistance via tâche planifiée — nom imitant un service Microsoft | Sysmon Event ID 11, Windows Event 4698 |
+### Event IDs clés
 
-### Règle YARA indicative
+| Event ID | Source | Signal |
+|----------|--------|--------|
+| Sysmon 1 | Process Create | Exécution d'un binaire inconnu depuis `%APPDATA%` |
+| Sysmon 3 | Network Connection | Connexion HTTPS sortante vers IP non catégorisée |
+| Sysmon 7 | Image Loaded | Chargement de DLL sans entrée IAT correspondante |
+| Sysmon 10 | Process Access | Accès à la mémoire de `kernel32.dll` / `ntdll.dll` |
+| Windows 4698 | Security | Création d'une Scheduled Task par un process inconnu |
+
+### Règles Sigma
+
+#### Détection EAT Walk (accès mémoire DLL système)
+
+```yaml
+title: Suspicious Direct Memory Access to System DLL
+id: vir28-sigma-001
+status: experimental
+description: |
+  Détecte un process accédant directement à la mémoire de DLLs système
+  sans passer par GetProcAddress — pattern typique d'un EAT walk (API hashing).
+references:
+  - https://attack.mitre.org/techniques/T1027/
+logsource:
+  product: windows
+  service: sysmon
+detection:
+  selection:
+    EventID: 10
+    TargetImage|endswith:
+      - '\kernel32.dll'
+      - '\ntdll.dll'
+    CallTrace|contains: 'UNKNOWN'
+  filter_legit:
+    SourceImage|startswith:
+      - 'C:\Windows\'
+      - 'C:\Program Files\'
+  condition: selection and not filter_legit
+falsepositives:
+  - Outils de sécurité légitimes (debuggers, AV)
+level: medium
+tags:
+  - attack.defense_evasion
+  - attack.t1027
+```
+
+#### Détection connexion réseau depuis binaire non signé
+
+```yaml
+title: Unsigned Binary HTTPS Outbound Connection
+id: vir28-sigma-002
+status: experimental
+description: |
+  Connexion HTTPS sortante depuis un binaire non signé situé hors
+  des répertoires système standard.
+logsource:
+  product: windows
+  service: sysmon
+detection:
+  selection:
+    EventID: 3
+    Initiated: 'true'
+    DestinationPort: 443
+  filter_signed:
+    Image|startswith:
+      - 'C:\Windows\'
+      - 'C:\Program Files\'
+      - 'C:\Program Files (x86)\'
+  condition: selection and not filter_signed
+falsepositives:
+  - Applications utilisateur non signées légitimes
+level: medium
+tags:
+  - attack.command_and_control
+  - attack.t1071
+```
+
+### Règle YARA — détection FNV-1a dans le binaire
 
 ```yara
-rule AV_Evasion_FNV1A {
+rule AV_Evasion_FNV1A_API_Hashing {
     meta:
         description = "Détecte l'usage du hash FNV-1a pour résolution dynamique d'API"
+        mitre       = "T1027"
     strings:
-        $fnv_prime  = { 93 C1 F7 00 }  // 16777619 en little-endian
-        $fnv_offset = { 61 C8 11 7C }  // 2166136261 en little-endian
+        $fnv_prime  = { 93 C1 F7 00 }   // 16777619 en little-endian
+        $fnv_offset = { 61 C8 11 7C }   // 2166136261 en little-endian
     condition:
-        all of them
+        uint16(0) == 0x5A4D and all of them
 }
 ```
+
+### IOC réseau
+
+- Connexion HTTPS port 443 vers `192.168.56.112` (host-only, lab uniquement)
+- Pas de SNI légitime (certificat auto-signé, CN=localhost)
+- Intervalle de beacon régulier : ~5s ± 2s (détectable par analyse de flux réseau)

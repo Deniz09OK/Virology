@@ -22,8 +22,6 @@ Le crate `obfstr` chiffre chaque string littérale à la **compilation** via XOR
 et la déchiffre en mémoire seulement au moment de l'utilisation.
 
 ```rust
-use crate::hide;   // macro définie dans evasion/obfuscation.rs
-
 let dll = hide!("kernel32.dll");   // aucune string visible dans le binaire
 ```
 
@@ -86,31 +84,69 @@ Récupérer l'adresse de la vraie fonction en mémoire
 Les hooks EDR dans les stubs DLL sont contournés car on résout directement
 l'adresse en mémoire.
 
-### Hash FNV-1a (compile-time)
+---
 
-```rust
-pub const H_VIRTUAL_ALLOC: u32 = fnv1a(b"VirtualAlloc");
+## Étape 3 — Compilation et exécution
+
+### Compilation (depuis le host Linux — cross-compile)
+
+```bash
+# Installer la target Windows et cargo-xwin (une seule fois)
+rustup target add x86_64-pc-windows-msvc
+cargo install cargo-xwin
+
+# Compiler le crate implant en release pour Windows
+cargo xwin build --release --target x86_64-pc-windows-msvc -p implant
+
+# Binaire produit :
+# target/x86_64-pc-windows-msvc/release/implant.exe
 ```
 
-Le hash est une constante numérique dans le binaire — pas de string.
+> **Note :** `cargo-xwin` télécharge automatiquement les headers MSVC (cl.exe, CRT).
+> Nécessite un accès à `aka.ms` (réseau ouvert, pas derriere proxy restrictif).
+
+### Compilation alternative (depuis Windows directement)
+
+```powershell
+# Prérequis : Visual Studio Build Tools ou MSVC installé
+cargo build --release --target x86_64-pc-windows-msvc -p implant
+```
+
+### Transfert sur la VM cible
+
+```bash
+# Depuis le host (192.168.56.112) vers la VM (192.168.56.111)
+# Via partage dossier VirtualBox ou SCP si SSH activé
+scp target/x86_64-pc-windows-msvc/release/implant.exe user@192.168.56.111:C:\Temp\
+```
+
+### Exécution sur la VM
+
+```powershell
+# Sur la VM Windows 11 — terminal standard (Medium Integrity)
+C:\Temp\implant.exe
+```
+
+**Comportements attendus :**
+
+| Résultat | Signification |
+|----------|---------------|
+| Processus exit 0 silencieux | Tous les EAT walks réussis, évasion OK |
+| Alerte Defender avant exécution | Détection statique — obfstr ou profil release insuffisant |
+| Panic `EAT walk failed: VirtualAlloc` | Bug dans `resolve()` — offset PE incorrect |
+| Alerte Defender pendant exécution | Détection comportementale — API hashing insuffisant |
+
+### Vérification de l'IAT (analyse statique post-compilation)
+
+```bash
+# Sur le host Linux — vérifier qu'aucune API sensible n'est importée
+strings target/x86_64-pc-windows-msvc/release/implant.exe | grep -iE 'virtualalloc|createthread|openprocess|loadlibrary'
+# Résultat attendu : aucune ligne (strings chiffrées, IAT vide pour ces API)
+```
 
 ---
 
-## Étape 3 — Validation sur VM
-
-### Méthodologie
-
-1. Cross-compiler le binaire depuis le host Linux :
-   ```bash
-   cargo build --release --target x86_64-pc-windows-msvc
-   ```
-2. Copier `target/x86_64-pc-windows-msvc/release/implant.exe` sur la VM (192.168.56.111)
-3. Sur la VM, vérifier que Windows Defender est actif et à jour
-4. Lancer `implant.exe` depuis un terminal standard (Medium Integrity)
-5. Observer les alertes Defender et les Event IDs Sysmon
-6. Analyser le binaire avec `strings implant.exe` et CFF Explorer (vérifier l'IAT)
-
-### Résultats de test
+## Résultats de test
 
 > à compléter après test sur la VM
 
@@ -130,7 +166,7 @@ Le hash est une constante numérique dans le binaire — pas de string.
 implant/src/evasion/
 ├── mod.rs            # exports du module
 ├── api_hashing.rs    # fnv1a() + resolve() — walk EAT
-└── obfuscation.rs    # wrappers obfstr + macro hide!()
+└── obfuscation.rs    # macro hide!() — obfstr wrapper
 ```
 
 ---
@@ -149,7 +185,7 @@ implant/src/evasion/
 
 ### Règles Sigma
 
-#### Détection EAT Walk (accès mémoire DLL système)
+#### Détection EAT Walk
 
 ```yaml
 title: Suspicious Direct Memory Access to System DLL

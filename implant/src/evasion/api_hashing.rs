@@ -1,5 +1,3 @@
-use std::ffi::CStr;
-
 /// FNV-1a 32-bit hash — evaluable at compile time for constant API hashes.
 pub const fn fnv1a(s: &[u8]) -> u32 {
     let mut h: u32 = 2166136261;
@@ -28,6 +26,7 @@ pub const H_LOAD_LIBRARY_A: u32 = fnv1a(b"LoadLibraryA");
 /// to the correct function signature before calling it.
 #[cfg(windows)]
 pub unsafe fn resolve(module_name: &[u8], target_hash: u32) -> Option<*const ()> {
+    use std::ffi::CStr;
     use windows::Win32::System::LibraryLoader::GetModuleHandleA;
     use windows::core::PCSTR;
 
@@ -47,7 +46,6 @@ pub unsafe fn resolve(module_name: &[u8], target_hash: u32) -> Option<*const ()>
     }
 
     // IMAGE_EXPORT_DIRECTORY offsets:
-    //   +20 NumberOfFunctions   (4)
     //   +24 NumberOfNames       (4)
     //   +28 AddressOfFunctions  (4)
     //   +32 AddressOfNames      (4)

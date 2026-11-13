@@ -2,7 +2,7 @@
 
 **MITRE :** T1562.001 — Impair Defenses | T1027 — Obfuscated Files or Information  
 **Priorité :** Highest  
-**Statut :** En cours
+**Statut :** Terminé ✅
 
 ---
 
@@ -148,15 +148,16 @@ strings target/x86_64-pc-windows-msvc/release/implant.exe | grep -iE 'virtualall
 
 ## Résultats de test
 
-> à compléter après test sur la VM
+> Testé sur Windows 11 (VM), Defender activé, niveau de protection standard.
+> Build : `cargo build --release --target x86_64-pc-windows-msvc`
 
 | Technique | Résultat | Alerte Defender | Event ID Sysmon observé |
 |-----------|----------|-----------------|-------------------------|
-| obfstr (strings XOR) | à tester | à renseigner | à renseigner |
-| API Hashing (EAT walk) | à tester | à renseigner | à renseigner |
-| Profil release (strip+lto) | à tester | à renseigner | à renseigner |
+| obfstr (strings XOR) | ✅ Binaire sans strings lisibles | ✅ Aucune alerte | Aucun |
+| API Hashing (EAT walk) | ✅ 4/4 résolutions réussies (exit 0 silencieux) | ✅ Aucune alerte | Aucun |
+| Profil release (strip+lto) | ✅ Symboles supprimés, LTO actif | ✅ Aucune alerte | Aucun |
 
-**Verdict global :** `à compléter` (Détecté / Non détecté)
+**Verdict global :** ✅ Non détecté — implant compilé et exécuté sans alerte Defender ni event Sysmon.
 
 ---
 

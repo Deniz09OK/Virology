@@ -1,0 +1,18 @@
+[package]
+name = "c2_server"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "c2_server"
+path = "src/main.rs"
+
+[dependencies]
+axum       = "0.7"
+tokio      = { version = "1", features = ["full"] }
+serde      = { version = "1", features = ["derive"] }
+serde_json = "1"
+obfstr     = "0.4"
+shared     = { path = "../shared" }
+
+# TLS (HTTPS) sera ajouté dans VIR-30 avec tokio-rustls

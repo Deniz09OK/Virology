@@ -1,0 +1,30 @@
+[package]
+name = "implant"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "implant"
+path = "src/main.rs"
+
+[dependencies]
+reqwest = { version = "0.12", features = ["json"] }
+tokio   = { version = "1", features = ["full"] }
+obfstr  = "0.4"
+rand    = "0.8"
+shared  = { path = "../shared" }
+
+# Windows-only : windows-sys pour le PEB walking (api_hash.rs)
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.52", features = [
+    "Win32_System_LibraryLoader",
+    "Win32_System_Memory",
+    "Win32_Foundation",
+] }
+
+[profile.release]
+opt-level     = "z"
+lto           = true
+strip         = true
+panic         = "abort"
+codegen-units = 1

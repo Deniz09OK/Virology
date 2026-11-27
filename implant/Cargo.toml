@@ -24,10 +24,3 @@ windows = { version = "0.58", features = [
     "Win32_System_TaskScheduler",
     "Win32_System_LibraryLoader",
 ] }
-
-[profile.release]
-opt-level = "z"
-lto = true
-codegen-units = 1
-panic = "abort"
-strip = true

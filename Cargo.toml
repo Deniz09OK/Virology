@@ -1,5 +1,9 @@
 [workspace]
-members = ["commun", "c2_server", "implant"]
+members = [
+    "commun",
+    "c2_server",
+    "implant",
+]
 resolver = "2"
 
 [profile.release]

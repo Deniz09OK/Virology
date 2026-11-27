@@ -69,7 +69,10 @@ fn validate_evasion() {
             ("LoadLibraryA", resolve(b"kernel32.dll\0", H_LOAD_LIBRARY_A)),
         ];
         for (name, ptr) in tests {
-            assert!(ptr.is_some(), "EAT walk failed: {}", name);
+            match ptr {
+                Some(addr) => println!("[+] EAT  {:<20} => {:?}", name, addr),
+                None => panic!("[-] EAT walk failed: {}", name),
+            }
         }
     }
 }
